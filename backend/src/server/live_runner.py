@@ -166,6 +166,9 @@ class LiveSession(threading.Thread):
         live_fps = fps  # start with detected, will be measured
 
         while not self._stop.is_set():
+            if time.perf_counter() - start > settings.MAX_SESSION_SECONDS:
+                self._publish({"type": "error", "message": "Session exceeded maximum duration."})
+                break
             ok, frame = cap.read()
             if not ok:
                 break

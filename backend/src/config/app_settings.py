@@ -87,6 +87,11 @@ class AppSettings(BaseSettings):
     # into durations (seconds) in the generated SessionReport.
     ANALYTICS_FPS: float = 25.0
 
+    # Live-session hard cap: a session running longer than this is stopped
+    # automatically, independent of the client sending a "stop" command —
+    # prevents one long/looping video from pinning CPU/GPU indefinitely.
+    MAX_SESSION_SECONDS: float = 600.0
+
     # Session analytics export (opt-in). When EXPORT_SESSION is true the engine
     # persists a complete SessionReport (produced by the analytics module) as a
     # single JSON document after a run. EXPORT_FORMAT is kept only for .env

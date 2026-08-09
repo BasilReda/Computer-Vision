@@ -24,8 +24,10 @@ Client → server::
 
     {"action": "stop"}      — finish now (rep history so far is exported)
 
-Only ONE live session may run at a time (a webcam is a single-user device);
-a second connection is rejected with an error event and closed.
+Only ONE ``source=webcam`` session may run at a time (a webcam is a
+single-user device); a second webcam connection while one is active is
+rejected with an error event and closed. ``source=video`` sessions don't
+share a hardware resource and are not serialized behind this gate.
 """
 
 import asyncio
@@ -71,12 +73,15 @@ async def live_session(websocket: WebSocket, exercise: str, source: str = "webca
             return await websocket.close()
         video = str(resolved)
 
-    if _active_session is not None and _active_session.is_alive():
+    if source == "webcam" and _active_session is not None and _active_session.is_alive():
         await websocket.send_json({"type": "error", "message": "Another live session is already running"})
         return await websocket.close()
 
     events: "queue.Queue" = queue.Queue(maxsize=120)
     session = LiveSession(exercise, source, events, video_path=video)
+    # Tracked for every session (not just webcam) so a webcam session
+    # started while a video session is running is still correctly blocked
+    # by the check above — only the check itself is source-scoped.
     _active_session = session
     session.start()
 
