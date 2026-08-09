@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import cv2
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
 from ...config import UPLOADS_DIR
@@ -50,6 +51,17 @@ def stored_path(upload_id: str) -> Optional[Path]:
         return None
     path = UPLOADS_DIR / upload_id
     return path if path.is_file() else None
+
+
+def _is_decodable_video(path: Path) -> bool:
+    cap = cv2.VideoCapture(str(path))
+    try:
+        if not cap.isOpened():
+            return False
+        ok, _frame = cap.read()
+        return ok
+    finally:
+        cap.release()
 
 
 def _describe(path: Path) -> Dict[str, Any]:
@@ -104,6 +116,10 @@ async def upload_video(file: UploadFile = File(...)) -> Dict[str, Any]:
     if size == 0:
         dest.unlink(missing_ok=True)
         raise HTTPException(status_code=422, detail="Empty file")
+
+    if not _is_decodable_video(dest):
+        dest.unlink(missing_ok=True)
+        raise HTTPException(status_code=422, detail="File content is not a readable video.")
 
     return {"id": stored, "name": _describe(dest)["name"], "size": size}
 
