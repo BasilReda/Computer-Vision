@@ -12,7 +12,9 @@ from typing import Any, Dict
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ...config import PROJECT_ROOT, REPO_ROOT, resolve_path, settings
+from ...config import ASSETS_DIR, MODELS_DIR, PROJECT_ROOT, REPO_ROOT, UPLOADS_DIR, resolve_path, settings
+
+_ALLOWED_VIDEO_ROOTS = (ASSETS_DIR, UPLOADS_DIR)
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 _ENV_PATH = PROJECT_ROOT / ".env"
@@ -77,6 +79,23 @@ def _current() -> Dict[str, Any]:
     return data
 
 
+def _assert_within(path: Path, allowed_roots: tuple, field: str) -> None:
+    resolved = resolve_path(path)
+    if not any(_is_relative_to(resolved, root) for root in allowed_roots):
+        raise HTTPException(
+            status_code=422,
+            detail=f"{field} must be inside one of: {[str(r) for r in allowed_roots]}",
+        )
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
 def _persist_env(updates: Dict[str, Any]) -> None:
     """Rewrite/update KEY=VALUE lines in .env, preserving everything else."""
     rendered = {key: _serialize_value(key, value) for key, value in updates.items()}
@@ -110,6 +129,10 @@ def update_settings(patch: SettingsPatch) -> Dict[str, Any]:
         return _current()
     if "ANALYTICS_FPS" in updates and updates["ANALYTICS_FPS"] <= 0:
         raise HTTPException(status_code=422, detail="ANALYTICS_FPS must be positive")
+    if "VIDEO_PATH" in updates and updates["VIDEO_PATH"]:
+        _assert_within(Path(updates["VIDEO_PATH"]), _ALLOWED_VIDEO_ROOTS, "VIDEO_PATH")
+    if "MODEL_PATH" in updates:
+        _assert_within(Path(updates["MODEL_PATH"]), (MODELS_DIR,), "MODEL_PATH")
     # Apply to the live settings object first (Path coercion kept intact).
     # Relative paths are resolved against the repo root here because
     # assignment does not re-run the AppSettings validator — the engine must
