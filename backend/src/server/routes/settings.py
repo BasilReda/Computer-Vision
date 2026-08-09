@@ -90,7 +90,7 @@ def _assert_within(path: Path, allowed_roots: tuple, field: str) -> None:
 
 def _is_relative_to(path: Path, root: Path) -> bool:
     try:
-        path.relative_to(root)
+        path.resolve().relative_to(root.resolve())
         return True
     except ValueError:
         return False
