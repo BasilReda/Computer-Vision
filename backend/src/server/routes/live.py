@@ -43,14 +43,18 @@ from .uploads import stored_path
 
 router = APIRouter(tags=["live"])
 
-# Single-slot gate. An asyncio.Lock would work too, but the boolean+guard
-# lives entirely inside the handler's task — simple and race-free there.
-_active_session: Optional[LiveSession] = None
+# All currently-active sessions (webcam AND video). A single slot isn't
+# enough once multiple video sessions can run concurrently: the webcam
+# gate must know whether ANY session is still alive, not just the most
+# recently connected one — otherwise a still-running video session's slot
+# can be silently overwritten (and then cleared) by a second, unrelated
+# video session finishing first, letting a webcam connection through while
+# the first video session is still using CPU/GPU.
+_active_sessions: set[LiveSession] = set()
 
 
 @router.websocket("/ws/live")
 async def live_session(websocket: WebSocket, exercise: str, source: str = "webcam", video: Optional[str] = None):
-    global _active_session
     await websocket.accept()
 
     if not internal_auth_ok(websocket.headers.get("x-internal-auth", "")):
@@ -73,16 +77,16 @@ async def live_session(websocket: WebSocket, exercise: str, source: str = "webca
             return await websocket.close()
         video = str(resolved)
 
-    if source == "webcam" and _active_session is not None and _active_session.is_alive():
+    if source == "webcam" and any(s.is_alive() for s in _active_sessions):
         await websocket.send_json({"type": "error", "message": "Another live session is already running"})
         return await websocket.close()
 
     events: "queue.Queue" = queue.Queue(maxsize=120)
     session = LiveSession(exercise, source, events, video_path=video)
     # Tracked for every session (not just webcam) so a webcam session
-    # started while a video session is running is still correctly blocked
-    # by the check above — only the check itself is source-scoped.
-    _active_session = session
+    # started while any video session is running is still correctly
+    # blocked by the check above — only the check itself is source-scoped.
+    _active_sessions.add(session)
     session.start()
 
     async def forward_events() -> None:
@@ -114,8 +118,7 @@ async def live_session(websocket: WebSocket, exercise: str, source: str = "webca
         session.stop()
         forward.cancel()
         listen.cancel()
-        if _active_session is session:
-            _active_session = None
+        _active_sessions.discard(session)
         try:
             await websocket.close()
         except RuntimeError:

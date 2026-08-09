@@ -164,10 +164,16 @@ class LiveSession(threading.Thread):
         start = time.perf_counter()
         last_fps_check = start
         live_fps = fps  # start with detected, will be measured
+        # Set only when the loop exits because of the duration cap; carried
+        # into the terminal "end" event below so the client learns why the
+        # session stopped (never surfaced as a separate "error" event —
+        # forward_events() in routes/live.py treats "error" as terminal and
+        # would drop the "end" event, including the export's session_id).
+        stopped_reason: Optional[str] = None
 
         while not self._stop.is_set():
             if time.perf_counter() - start > settings.MAX_SESSION_SECONDS:
-                self._publish({"type": "error", "message": "Session exceeded maximum duration."})
+                stopped_reason = "max_duration_exceeded"
                 break
             ok, frame = cap.read()
             if not ok:
@@ -220,6 +226,8 @@ class LiveSession(threading.Thread):
             ended["rendered_video"] = rendered_name
         if rendered_error is not None:
             ended["rendered_error"] = rendered_error
+        if stopped_reason:
+            ended["stopped_reason"] = stopped_reason
         try:
             from ..analytics.analyzer import SessionAnalyzer
             from ..analytics.exporters import JsonSessionExporter
