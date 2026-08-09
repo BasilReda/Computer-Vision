@@ -35,6 +35,7 @@ from typing import Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from ...exercises.registry import registry
+from ..auth import internal_auth_ok
 from ..live_runner import LiveSession
 from .uploads import stored_path
 
@@ -49,6 +50,10 @@ _active_session: Optional[LiveSession] = None
 async def live_session(websocket: WebSocket, exercise: str, source: str = "webcam", video: Optional[str] = None):
     global _active_session
     await websocket.accept()
+
+    if not internal_auth_ok(websocket.headers.get("x-internal-auth", "")):
+        await websocket.send_json({"type": "error", "message": "Missing or invalid internal service credentials."})
+        return await websocket.close()
 
     if exercise not in registry.list():
         await websocket.send_json({"type": "error", "message": f"Unknown exercise '{exercise}'"})

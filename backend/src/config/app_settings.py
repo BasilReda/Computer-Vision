@@ -55,6 +55,15 @@ def resolve_path(path, base: Path = REPO_ROOT) -> Path:
 
 
 class AppSettings(BaseSettings):
+    # This API has no user-level auth of its own — it's meant to be called
+    # only by the tamreena-web BFF, which authenticates actual end users.
+    # Every /api/* request (and the /ws/live handshake) must carry this
+    # value in an X-Internal-Auth header (see server/auth.py); it must
+    # match the value tamreena-web's backend sends. An empty value means
+    # every request is rejected, not that auth is skipped — set this in
+    # .env before running anywhere reachable outside your own machine.
+    INTERNAL_SERVICE_TOKEN: str = ""
+
     # Paths are Path objects; relative strings are resolved against PROJECT_ROOT.
     MODEL_PATH: Path
     VIDEO_PATH: Optional[Path] = None

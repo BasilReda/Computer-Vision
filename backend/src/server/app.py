@@ -5,9 +5,10 @@ without moving handlers). CORS is open to local dev origins (Vite on :5173
 and :4173); tighten for real deployments via a reverse proxy.
 """
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from .auth import require_internal_auth
 from .routes import downloads, exercises, live, sessions, settings as settings_routes, uploads
 
 
@@ -34,11 +35,14 @@ def create_app() -> FastAPI:
     def health() -> dict:
         return {"status": "ok"}
 
-    app.include_router(exercises.router, prefix="/api")
-    app.include_router(sessions.router, prefix="/api")
-    app.include_router(settings_routes.router, prefix="/api")
-    app.include_router(uploads.router, prefix="/api")
-    app.include_router(downloads.router, prefix="/api")
+    _internal_auth = [Depends(require_internal_auth)]
+    app.include_router(exercises.router, prefix="/api", dependencies=_internal_auth)
+    app.include_router(sessions.router, prefix="/api", dependencies=_internal_auth)
+    app.include_router(settings_routes.router, prefix="/api", dependencies=_internal_auth)
+    app.include_router(uploads.router, prefix="/api", dependencies=_internal_auth)
+    app.include_router(downloads.router, prefix="/api", dependencies=_internal_auth)
+    # live.router's /ws/live checks the same secret itself (see server/auth.py's
+    # module docstring for why it isn't wired up as a Depends here).
     app.include_router(live.router)
     return app
 
