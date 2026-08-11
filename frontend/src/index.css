@@ -4,37 +4,37 @@
 
 @layer base {
   .dark {
-    --background: 225 20% 5%;
-    --foreground: 0 0% 96%;
-    --card: 225 16% 8%;
-    --card-foreground: 0 0% 96%;
-    --muted: 225 12% 14%;
-    --muted-foreground: 225 8% 60%;
-    --primary: 80 90% 52%;            /* athletic lime */
-    --primary-foreground: 80 90% 6%;
-    --secondary: 225 12% 16%;
-    --secondary-foreground: 0 0% 92%;
-    --border: 225 12% 15%;
-    --input: 225 12% 18%;
-    --ring: 80 90% 52%;
-    --success: 150 70% 45%;
-    --warning: 38 92% 55%;
-    --destructive: 350 80% 58%;
+    --background: 228 75% 6%;           /* Deep Navy #050c24 */
+    --foreground: 0 0% 100%;            /* Bright White #ffffff */
+    --card: 228 65% 12%;               /* Deep Navy Card */
+    --card-foreground: 0 0% 100%;
+    --muted: 215 15% 35%;
+    --muted-foreground: 215 15% 65%;
+    --primary: 180 100% 50%;           /* Tamrena-AI Vivid Cyan #00ffff */
+    --primary-foreground: 228 75% 6%;
+    --secondary: 180 100% 25%;         /* Deep Teal #008080 */
+    --secondary-foreground: 0 0% 100%;
+    --border: 215 15% 25%;             /* Slate Gray border */
+    --input: 228 50% 16%;
+    --ring: 180 100% 50%;
+    --success: 150 100% 45%;
+    --warning: 38 100% 50%;
+    --destructive: 350 100% 55%;
   }
   :root:not(.dark) {
     --background: 0 0% 98%;
-    --foreground: 225 20% 10%;
+    --foreground: 228 75% 6%;
     --card: 0 0% 100%;
-    --card-foreground: 225 20% 10%;
-    --muted: 225 14% 93%;
-    --muted-foreground: 225 8% 42%;
-    --primary: 80 85% 40%;
+    --card-foreground: 228 75% 6%;
+    --muted: 215 15% 93%;
+    --muted-foreground: 215 15% 42%;
+    --primary: 180 100% 40%;           /* Vivid Cyan */
     --primary-foreground: 0 0% 100%;
-    --secondary: 225 14% 93%;
-    --secondary-foreground: 225 20% 12%;
-    --border: 225 12% 88%;
-    --input: 225 12% 86%;
-    --ring: 80 85% 40%;
+    --secondary: 180 100% 25%;         /* Deep Teal */
+    --secondary-foreground: 0 0% 100%;
+    --border: 215 15% 85%;
+    --input: 215 15% 86%;
+    --ring: 180 100% 40%;
     --success: 150 70% 35%;
     --warning: 38 92% 45%;
     --destructive: 350 75% 48%;

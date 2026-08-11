@@ -29,12 +29,21 @@ _DEFAULT_WEIGHTS = {"error": 50.0, "warning": 20.0, "info": 10.0}
 
 class LiveSession(threading.Thread):
 
-    def __init__(self, exercise: str, source: str, events: "queue.Queue", video_path: Optional[str] = None, use_3d: bool | None = None) -> None:
+    def __init__(
+        self,
+        exercise: str,
+        source: str,
+        events: "queue.Queue",
+        video_path: Optional[str] = None,
+        use_3d: bool | None = None,
+        frame_queue: Optional["queue.Queue"] = None,
+    ) -> None:
         super().__init__(daemon=True)
         self.exercise_key = exercise
         self.source = source
         self.video_path = video_path
         self.events = events
+        self.frame_queue = frame_queue
         # If not specified, use from settings/.env
         self.use_3d = use_3d if use_3d is not None else settings.USE_3D
         self._stop = threading.Event()
@@ -100,6 +109,7 @@ class LiveSession(threading.Thread):
         }
 
     def run(self) -> None:
+        import numpy as np
         from ..exercises.registry import registry
 
         try:
@@ -108,16 +118,18 @@ class LiveSession(threading.Thread):
             self._publish({"type": "error", "message": f"Unknown exercise: {exc}"})
             return
 
-        try:
-            cap = open_capture(
-                video_path=self.video_path
-                or (str(settings.VIDEO_PATH) if settings.VIDEO_PATH else None),
-                use_webcam=self.source == "webcam",
-                webcam_index=settings.WEBCAM_INDEX,
-            )
-        except VideoSourceError as exc:
-            self._publish({"type": "error", "message": str(exc)})
-            return
+        cap = None
+        if self.source != "browser":
+            try:
+                cap = open_capture(
+                    video_path=self.video_path
+                    or (str(settings.VIDEO_PATH) if settings.VIDEO_PATH else None),
+                    use_webcam=self.source == "webcam",
+                    webcam_index=settings.WEBCAM_INDEX,
+                )
+            except VideoSourceError as exc:
+                self._publish({"type": "error", "message": str(exc)})
+                return
 
         safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in engine.exercise.name)
         stamp = time.strftime("%Y%m%d_%H%M%S")
@@ -127,12 +139,15 @@ class LiveSession(threading.Thread):
 
         # --- Dynamic FPS detection ---
         import math
-        detected_fps = cap.get(cv2.CAP_PROP_FPS)
-        if detected_fps is None or detected_fps <= 0 or detected_fps > 120 or math.isnan(detected_fps):
-            detected_fps = settings.ANALYTICS_FPS  # fallback, will be updated by live measurement
+        if cap is not None:
+            detected_fps = cap.get(cv2.CAP_PROP_FPS)
+            if detected_fps is None or detected_fps <= 0 or detected_fps > 120 or math.isnan(detected_fps):
+                detected_fps = settings.ANALYTICS_FPS  # fallback, will be updated by live measurement
+        else:
+            detected_fps = settings.ANALYTICS_FPS
         fps_for_writer = detected_fps
 
-        if settings.SAVE_OUTPUT:
+        if settings.SAVE_OUTPUT and cap is not None:
             try:
                 RENDERED_DIR.mkdir(parents=True, exist_ok=True)
                 rendered_name = f"{safe_name}_{stamp}.mp4"
@@ -151,7 +166,8 @@ class LiveSession(threading.Thread):
         try:
             pose_service = PoseService(settings.MODEL_PATH)
         except Exception as exc:
-            cap.release()
+            if cap is not None:
+                cap.release()
             if writer is not None:
                 writer.release()
                 (RENDERED_DIR / rendered_name).unlink(missing_ok=True)
@@ -163,6 +179,7 @@ class LiveSession(threading.Thread):
         frame_id, frames_tick = 0, 0
         start = time.perf_counter()
         last_fps_check = start
+        last_timestamp = -1
         live_fps = fps  # start with detected, will be measured
         # Set only when the loop exits because of the duration cap; carried
         # into the terminal "end" event below so the client learns why the
@@ -175,11 +192,49 @@ class LiveSession(threading.Thread):
             if time.perf_counter() - start > settings.MAX_SESSION_SECONDS:
                 stopped_reason = "max_duration_exceeded"
                 break
-            ok, frame = cap.read()
-            if not ok:
-                break
+
+            if self.source == "browser":
+                if self.frame_queue is None:
+                    break
+                try:
+                    raw_bytes = self.frame_queue.get(timeout=0.5)
+                except queue.Empty:
+                    continue
+
+                if raw_bytes is None or self._stop.is_set():
+                    break
+
+                nparr = np.frombuffer(raw_bytes, np.uint8)
+                frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                if frame is None:
+                    continue
+
+                if writer is None and settings.SAVE_OUTPUT and rendered_error is None:
+                    try:
+                        RENDERED_DIR.mkdir(parents=True, exist_ok=True)
+                        rendered_name = f"{safe_name}_{stamp}.mp4"
+                        h_init, w_init = frame.shape[:2]
+                        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                        writer = cv2.VideoWriter(str(RENDERED_DIR / rendered_name), fourcc, fps_for_writer, (w_init, h_init))
+                        if not writer.isOpened():
+                            writer.release()
+                            writer, rendered_name = None, None
+                            rendered_error = "OpenCV could not create the output video"
+                    except Exception as exc:
+                        writer, rendered_name = None, None
+                        rendered_error = str(exc)
+            else:
+                ok, frame = cap.read()
+                if not ok:
+                    break
+
             h, w = frame.shape[:2]
-            timestamp = int((frame_id / fps) * 1000)
+            if self.source == "browser":
+                now_ts = int((time.perf_counter() - start) * 1000)
+                timestamp = max(last_timestamp + 1, now_ts)
+                last_timestamp = timestamp
+            else:
+                timestamp = int((frame_id / fps) * 1000)
             detection = pose_service.detect(frame, timestamp)
             frame_result = None
             if detection and detection.pose_landmarks:
@@ -199,7 +254,7 @@ class LiveSession(threading.Thread):
             )
             if ok_jpg:
                 self._publish(jpg.tobytes())
-            if frame_result is not None and frame_id % _STATE_EVERY_N_FRAMES == 0:
+            if frame_id % _STATE_EVERY_N_FRAMES == 0:
                 elapsed = time.perf_counter() - start
                 self._publish(self._state(engine, results, elapsed, live_fps))
             frame_id += 1
@@ -214,7 +269,8 @@ class LiveSession(threading.Thread):
                         fps = (fps * 0.7 + live_fps * 0.3)
                 frames_tick, last_fps_check = 0, now
 
-        cap.release()
+        if cap is not None:
+            cap.release()
         if writer is not None:
             writer.release()
 

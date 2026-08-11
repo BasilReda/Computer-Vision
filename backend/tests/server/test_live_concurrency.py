@@ -56,11 +56,12 @@ class FakeLiveSession:
 
     instances = []
 
-    def __init__(self, exercise, source, events, video_path=None, use_3d=None):
+    def __init__(self, exercise, source, events, video_path=None, use_3d=None, frame_queue=None, **kwargs):
         self.exercise = exercise
         self.source = source
         self.events: "queue.Queue" = events
         self.video_path = video_path
+        self.frame_queue = frame_queue
         self._alive = True
         FakeLiveSession.instances.append(self)
 
@@ -159,5 +160,28 @@ def test_webcam_gate_allows_connection_once_all_sessions_have_finished(monkeypat
 
         FakeLiveSession.instances[-1].finish()
         await asyncio.wait_for(task_b, timeout=2)
+
+    asyncio.run(scenario())
+
+
+def test_browser_source_initializes_frame_queue(monkeypatch):
+    monkeypatch.setattr(settings, "INTERNAL_SERVICE_TOKEN", "test-token")
+    monkeypatch.setattr(live_mod, "LiveSession", FakeLiveSession)
+    live_mod._active_sessions.clear()
+    FakeLiveSession.instances.clear()
+
+    async def scenario():
+        ws = FakeWebSocket()
+        task = asyncio.create_task(
+            live_mod.live_session(ws, exercise="squat", source="browser", video=None)
+        )
+        await asyncio.sleep(0.1)
+        assert len(FakeLiveSession.instances) == 1
+        session = FakeLiveSession.instances[0]
+        assert session.source == "browser"
+        assert session.frame_queue is not None
+
+        session.finish()
+        await asyncio.wait_for(task, timeout=2)
 
     asyncio.run(scenario())

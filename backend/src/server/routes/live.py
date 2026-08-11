@@ -64,8 +64,8 @@ async def live_session(websocket: WebSocket, exercise: str, source: str = "webca
     if exercise not in registry.list():
         await websocket.send_json({"type": "error", "message": f"Unknown exercise '{exercise}'"})
         return await websocket.close()
-    if source not in ("webcam", "video"):
-        await websocket.send_json({"type": "error", "message": "source must be 'webcam' or 'video'"})
+    if source not in ("webcam", "video", "browser"):
+        await websocket.send_json({"type": "error", "message": "source must be 'webcam', 'video', or 'browser'"})
         return await websocket.close()
 
     # Resolve upload references to real paths inside uploads/videos/.
@@ -82,7 +82,8 @@ async def live_session(websocket: WebSocket, exercise: str, source: str = "webca
         return await websocket.close()
 
     events: "queue.Queue" = queue.Queue(maxsize=120)
-    session = LiveSession(exercise, source, events, video_path=video)
+    frame_queue: Optional["queue.Queue"] = queue.Queue(maxsize=30) if source == "browser" else None
+    session = LiveSession(exercise, source, events, video_path=video, frame_queue=frame_queue)
     # Tracked for every session (not just webcam) so a webcam session
     # started while any video session is running is still correctly
     # blocked by the check above — only the check itself is source-scoped.
@@ -102,13 +103,49 @@ async def live_session(websocket: WebSocket, exercise: str, source: str = "webca
                     return
 
     async def listen_commands() -> None:
+        import json
         try:
             while True:
-                message = await websocket.receive_json()
-                if message.get("action") == "stop":
+                msg = await websocket.receive()
+                if msg["type"] == "websocket.disconnect":
                     session.stop()
+                    if frame_queue is not None:
+                        try:
+                            frame_queue.put_nowait(None)
+                        except Exception:
+                            pass
+                    return
+                if msg.get("bytes") is not None and frame_queue is not None:
+                    try:
+                        frame_queue.put_nowait(msg["bytes"])
+                    except queue.Full:
+                        try:
+                            frame_queue.get_nowait()
+                        except queue.Empty:
+                            pass
+                        try:
+                            frame_queue.put_nowait(msg["bytes"])
+                        except Exception:
+                            pass
+                elif msg.get("text") is not None:
+                    try:
+                        message = json.loads(msg["text"])
+                        if message.get("action") == "stop":
+                            session.stop()
+                            if frame_queue is not None:
+                                try:
+                                    frame_queue.put_nowait(None)
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
         except WebSocketDisconnect:
             session.stop()
+            if frame_queue is not None:
+                try:
+                    frame_queue.put_nowait(None)
+                except Exception:
+                    pass
 
     forward = asyncio.create_task(forward_events())
     listen = asyncio.create_task(listen_commands())
@@ -116,6 +153,11 @@ async def live_session(websocket: WebSocket, exercise: str, source: str = "webca
         await asyncio.wait({forward, listen}, return_when=asyncio.FIRST_COMPLETED)
     finally:
         session.stop()
+        if frame_queue is not None:
+            try:
+                frame_queue.put_nowait(None)
+            except Exception:
+                pass
         forward.cancel()
         listen.cancel()
         _active_sessions.discard(session)
